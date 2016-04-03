@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Paintose</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/g/jquery.ui@1.11.4(jquery-ui.min.css+jquery-ui.structure.min.css+jquery-ui.theme.min.css)">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontawesome/4.5.0/css/font-awesome.min.css">
+    <style>
+    body,#container {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+    }
+    #toolbar {
+        height: 50px;
+    }
+    #canvasContainer {
+        width: 100%;
+        height: calc(100% - 50px);
+    }
+    .resize-container {
+        position: absolute;
+        display: inline-block;
+        cursor: move;
+        margin: 0 auto;
+        width: 250px;
+        height: 250px;
+        z-index: 666;
+        display: block;
+        outline: 2px dashed rgba(222,60,80,.9);
+    }
+
+    #filename {
+        height: 32px;
+        border-radius: 4px;
+    }
+
+    .active {
+        border: 1px solid #fbd850;
+        background: #fdf5ce;
+        font-weight: bold;
+        color: #eb8f00;
+    }
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/g/jquery@2.2.2,jquery.ui@1.11.4,knockout@3.4.0"></script>
+
+</head>
+<body>
+    <div id="container">
+        <div id="toolbar">
+            <input class="btn" id="filedata" type="file"/>
+            <button class="btn" onclick="resize(1600)">1600px</button>
+            <button class="btn" onclick="resize(1200)">1200px</button>
+            <button class="btn" onclick="resize(800)">800px</button>
+            <button class="btn" onclick="resize(400)">400px</button>
+            <button class="btn" onclick="resize(250)">250px</button>
+            <button class="btn" onclick="rotateCanvas(-90)"><i class="fa fa-rotate-left"></i></button>
+            <button class="btn" onclick="rotateCanvas(90)"><i class="fa fa-rotate-right"></i></button>
+            <button class="btn" id="cropButton" onclick="cropImage()"><i class="fa fa-crop"></i></button>
+            <button class="btn" id="drawButton" onclick="toggleDraw()"><i class="fa fa-paint-brush"></i></button>
+            <input id="filename" class="ui-widget ui-state-default" type="text"/>
+            <a class="btn" id="btn-download" href="#" download><i class="fa fa-save"></i></a>
+        </div>
+        <div id="canvasContainer">
+            <div id="frame" class="resize-container"></div>
+            <canvas id="canvas"></canvas>
+        </div>
+    </div>
+    <script>
+    var datatype = 'image/png';
+    var filename = 'paintose.png';
+    var canvas = document.getElementById('canvas');
+
+    $('#frame').resizable();
+    $('#frame').draggable();
+    $('.btn').button();
+
+    function getZoom() {
+        var xfactor = canvas.clientWidth / canvas.width;
+        var yfactor = canvas.clientHeight / canvas.height;
+        return (xfactor+yfactor) / 2;
+    }
+
+        // scales the canvas by (float) scale < 1
+    // returns a new canvas containing the scaled image.
+    function downScaleCanvas(cv, scale) {
+        if (!(scale < 1) || !(scale > 0)) throw ('scale must be a positive number <1 ');
+        var sqScale = scale * scale; // square scale = area of source pixel within target
+        var sw = cv.width; // source image width
+        var sh = cv.height; // source image height
+        var tw = Math.floor(sw * scale); // target image width
+        var th = Math.floor(sh * scale); // target image height
+        var sx = 0, sy = 0, sIndex = 0; // source x,y, index within source array
+        var tx = 0, ty = 0, yIndex = 0, tIndex = 0; // target x,y, x,y index within target array
+        var tX = 0, tY = 0; // rounded tx, ty
+        var w = 0, nw = 0, wx = 0, nwx = 0, wy = 0, nwy = 0; // weight / next weight x / y
+        // weight is weight of current source point within target.
+        // next weight is weight of current source point within next target's point.
+        var crossX = false; // does scaled px cross its current px right border ?
+        var crossY = false; // does scaled px cross its current px bottom border ?
+        var sBuffer = cv.getContext('2d').
+        getImageData(0, 0, sw, sh).data; // source buffer 8 bit rgba
+        var tBuffer = new Float32Array(3 * tw * th); // target buffer Float32 rgb
+        var sR = 0, sG = 0,  sB = 0; // source's current point r,g,b
+        /* untested !
+        var sA = 0;  //source alpha  */
+
+        for (sy = 0; sy < sh; sy++) {
+            ty = sy * scale; // y src position within target
+            tY = 0 | ty;     // rounded : target pixel's y
+            yIndex = 3 * tY * tw;  // line index within target array
+            crossY = (tY != (0 | ty + scale));
+            if (crossY) { // if pixel is crossing botton target pixel
+                wy = (tY + 1 - ty); // weight of point within target pixel
+                nwy = (ty + scale - tY - 1); // ... within y+1 target pixel
+            }
+            for (sx = 0; sx < sw; sx++, sIndex += 4) {
+                tx = sx * scale; // x src position within target
+                tX = 0 |  tx;    // rounded : target pixel's x
+                tIndex = yIndex + tX * 3; // target pixel index within target array
+                crossX = (tX != (0 | tx + scale));
+                if (crossX) { // if pixel is crossing target pixel's right
+                    wx = (tX + 1 - tx); // weight of point within target pixel
+                    nwx = (tx + scale - tX - 1); // ... within x+1 target pixel
+                }
+                sR = sBuffer[sIndex    ];   // retrieving r,g,b for curr src px.
+                sG = sBuffer[sIndex + 1];
+                sB = sBuffer[sIndex + 2];
+
+                if (!crossX && !crossY) { // pixel does not cross
+                    // just add components weighted by squared scale.
+                    tBuffer[tIndex    ] += sR * sqScale;
+                    tBuffer[tIndex + 1] += sG * sqScale;
+                    tBuffer[tIndex + 2] += sB * sqScale;
+                } else if (crossX && !crossY) { // cross on X only
+                    w = wx * scale;
+                    // add weighted component for current px
+                    tBuffer[tIndex    ] += sR * w;
+                    tBuffer[tIndex + 1] += sG * w;
+                    tBuffer[tIndex + 2] += sB * w;
+                    // add weighted component for next (tX+1) px
+                    nw = nwx * scale
+                    tBuffer[tIndex + 3] += sR * nw;
+                    tBuffer[tIndex + 4] += sG * nw;
+                    tBuffer[tIndex + 5] += sB * nw;
+                } else if (crossY && !crossX) { // cross on Y only
+                    w = wy * scale;
+                    // add weighted component for current px
+                    tBuffer[tIndex    ] += sR * w;
+                    tBuffer[tIndex + 1] += sG * w;
+                    tBuffer[tIndex + 2] += sB * w;
+                    // add weighted component for next (tY+1) px
+                    nw = nwy * scale
+                    tBuffer[tIndex + 3 * tw    ] += sR * nw;
+                    tBuffer[tIndex + 3 * tw + 1] += sG * nw;
+                    tBuffer[tIndex + 3 * tw + 2] += sB * nw;
+                } else { // crosses both x and y : four target points involved
+                    // add weighted component for current px
+                    w = wx * wy;
+                    tBuffer[tIndex    ] += sR * w;
+                    tBuffer[tIndex + 1] += sG * w;
+                    tBuffer[tIndex + 2] += sB * w;
+                    // for tX + 1; tY px
+                    nw = nwx * wy;
+                    tBuffer[tIndex + 3] += sR * nw;
+                    tBuffer[tIndex + 4] += sG * nw;
+                    tBuffer[tIndex + 5] += sB * nw;
+                    // for tX ; tY + 1 px
+                    nw = wx * nwy;
+                    tBuffer[tIndex + 3 * tw    ] += sR * nw;
+                    tBuffer[tIndex + 3 * tw + 1] += sG * nw;
+                    tBuffer[tIndex + 3 * tw + 2] += sB * nw;
+                    // for tX + 1 ; tY +1 px
+                    nw = nwx * nwy;
+                    tBuffer[tIndex + 3 * tw + 3] += sR * nw;
+                    tBuffer[tIndex + 3 * tw + 4] += sG * nw;
+                    tBuffer[tIndex + 3 * tw + 5] += sB * nw;
+                }
+            } // end for sx
+        } // end for sy
+
+        // create result canvas
+        var resCV = document.createElement('canvas');
+        resCV.width = tw;
+        resCV.height = th;
+        var resCtx = resCV.getContext('2d');
+        var imgRes = resCtx.getImageData(0, 0, tw, th);
+        var tByteBuffer = imgRes.data;
+        // convert float32 array into a UInt8Clamped Array
+        var pxIndex = 0; //
+        for (sIndex = 0, tIndex = 0; pxIndex < tw * th; sIndex += 3, tIndex += 4, pxIndex++) {
+            tByteBuffer[tIndex] = Math.ceil(tBuffer[sIndex]);
+            tByteBuffer[tIndex + 1] = Math.ceil(tBuffer[sIndex + 1]);
+            tByteBuffer[tIndex + 2] = Math.ceil(tBuffer[sIndex + 2]);
+            tByteBuffer[tIndex + 3] = 255;
+        }
+        return {"width":tw,"height":th,"data":imgRes}
+    }
+
+    function resize(max) {
+        var ratio;
+
+        if(canvas.width > canvas.height) {
+            ratio = max / canvas.width;
+        }
+        else {
+            ratio = max / canvas.height;
+        }
+
+        var resizedData = downScaleCanvas(canvas,ratio);
+        canvas.width = resizedData.width;
+        canvas.height = resizedData.height;
+        canvas.getContext('2d').putImageData(resizedData.data,0,0);
+        updateCanvasSize();
+
+    }
+
+    function updateCanvasSize() {
+        var maxWidth = $(window).width();
+        var maxHeight = $(window).height() - 55;
+        var xFactor = maxWidth / canvas.width;
+        var yFactor = maxHeight / canvas.height;
+        var factor = Math.min(xFactor,yFactor);
+        canvas.style.width = Math.round(canvas.width*factor)+'px';
+        canvas.style.height = Math.round(canvas.height*factor)+'px';
+    }
+
+    function handleFileSelect(evt) {
+      var f = evt.target.files[0]; // FileList object
+        // Only process image files.
+        console.log(f);
+        if (!f.type.match('image.*')) {
+          return false;
+        }
+        datatype = f.type;
+        filename = f.name;
+        $('#filename').val(filename);
+        var reader = new FileReader();
+        // Closure to capture the file information.
+        reader.onload = (function(theFile) {
+          return function(e) {
+            var b64 = e.target.result;
+            var im = new Image();
+            im.onload = function() {
+                canvas.width = im.width;
+                canvas.height = im.height;
+                updateCanvasSize();
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(im,0,0);
+            }
+            im.src = b64;
+          };
+        })(f);
+        // Read in the image file as a data URL.
+        reader.readAsDataURL(f);
+     }
+    document.getElementById('filedata').addEventListener('change', handleFileSelect, false);
+
+    var button = document.getElementById('btn-download');
+    button.addEventListener('click', function (e) {
+        var dataURL = canvas.toDataURL(datatype);
+        button.href = dataURL;
+        button.download = $('#filename').val();
+    });
+
+    var rectDrawStartPos = null;
+
+    function strokedRectOnMouseDown(e) {
+        var z= getZoom();
+        $(sketchCanvas).on('mousemove', strokedRectOnMouseMove);
+        var mouseX = (e.pageX - sketchCanvas.offsetLeft)/z;
+        var mouseY = (e.pageY - sketchCanvas.offsetTop)/z;
+        rectDrawStartPos = [mouseX,mouseY];
+
+    }
+
+    function strokedRectOnMouseMove(e) {
+        sketchCanvas.width = sketchCanvas.width;
+        var z= getZoom();
+        var mouseX = (e.pageX - sketchCanvas.offsetLeft)/z;
+        var mouseY = (e.pageY - sketchCanvas.offsetTop)/z;
+        var ctx = sketchCanvas.getContext('2d');
+        ctx.strokeRect(rectDrawStartPos[0],rectDrawStartPos[1],mouseX,mouseY);
+    }
+
+    function strokedRectOnMouseUp(e) {
+        console.log(e);
+        $(sketchCanvas).off('mousemove', strokedRectOnMouseMove);
+        rectDrawStartPos = null;
+        canvas.getContext('2d').drawImage(sketchCanvas,0,0);
+        sketchCanvas.width = sketchCanvas.width;
+    }
+
+    function drawRect() {
+        sketchCanvas = document.createElement('canvas');
+        sketchCanvas.width = canvas.width;
+        sketchCanvas.height = canvas.height;
+        sketchCanvas.style.position = 'absolute';
+        sketchCanvas.style.left = $(canvas).offset().left;
+        sketchCanvas.style.top = $(canvas).offset().top;
+        sketchCanvas.style.width = canvas.style.width;
+        sketchCanvas.style.height = canvas.style.height;
+        $(sketchCanvas).appendTo($('#canvasContainer'));
+        $(sketchCanvas).on('mousedown', strokedRectOnMouseDown);
+        $(sketchCanvas).on('mouseup', strokedRectOnMouseUp);
+    }
+
+    function cropImage() {
+        var $container = $('#frame');
+        var offset = $container.offset();
+        var z = getZoom();
+        var width = $container.width()/z;
+        var height = $container.height()/z;
+        var left = offset.left/z;
+        var top = offset.top/z;
+        var crop_canvas = document.createElement('canvas');
+        crop_canvas.width = width;
+        crop_canvas.height = height;
+        crop_canvas.getContext('2d').drawImage(canvas, left, top, width, height, 0, 0, width, height);
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(crop_canvas,0,0);
+        updateCanvasSize();
+        $('#cropButton').blur();
+    }
+
+    var clickX = [];
+    var clickY = [];
+    var clickDrag = [];
+    var paint;
+
+    function addClick(x, y, dragging)
+    {
+      var z = getZoom();
+      clickX.push(x/z);
+      clickY.push(y/z);
+      clickDrag.push(dragging);
+    }
+
+    function redraw(){
+        var context = sketchCanvas.getContext('2d');
+      context.clearRect(0, 0, context.canvas.width, context.canvas.height); // Clears the canvas
+
+      context.strokeStyle = "#df4b26";
+      context.lineJoin = "round";
+      context.lineWidth = 5;
+
+      for(var i=0; i < clickX.length; i++) {
+        context.beginPath();
+        if(clickDrag[i] && i){
+          context.moveTo(clickX[i-1], clickY[i-1]);
+         }else{
+           context.moveTo(clickX[i]-1, clickY[i]);
+         }
+         context.lineTo(clickX[i], clickY[i]);
+         context.closePath();
+         context.stroke();
+      }
+    }
+
+    function toggleDraw() {
+        if($('#sketchCanvas').length) {
+            document.getElementById('canvasContainer').removeChild(sketchCanvas);
+            $('#drawButton').removeClass('active');
+            $('#drawButton').blur();
+        }
+        else {
+            drawFreehand();
+        }
+    }
+
+    function drawFreehand() {
+        sketchCanvas = document.createElement('canvas');
+        sketchCanvas.setAttribute('id','sketchCanvas');
+        sketchCanvas.width = canvas.width;
+        sketchCanvas.height = canvas.height;
+        sketchCanvas.style.position = 'absolute';
+        sketchCanvas.style.left = $(canvas).offset().left;
+        sketchCanvas.style.top = $(canvas).offset().top;
+        sketchCanvas.style.width = canvas.style.width;
+        sketchCanvas.style.height = canvas.style.height;
+        sketchCanvas.style.zIndex = 666;
+        $(sketchCanvas).appendTo($('#canvasContainer'));
+        $(sketchCanvas).mousedown(function(e){
+          var mouseX = e.pageX - this.offsetLeft;
+          var mouseY = e.pageY - this.offsetTop;
+
+          paint = true;
+          addClick(e.pageX - this.offsetLeft, e.pageY - this.offsetTop);
+          redraw();
+        });
+        $(sketchCanvas).mouseleave(function(e){
+            paint = false;
+        });
+
+        $(sketchCanvas).mouseup(function(e){
+          paint = false;
+          canvas.getContext('2d').drawImage(sketchCanvas,0,0);
+          sketchCanvas.width = sketchCanvas.width;
+        });
+
+        $(sketchCanvas).mousemove(function(e){
+          if(paint){
+            addClick(e.pageX - this.offsetLeft, e.pageY - this.offsetTop, true);
+            redraw();
+          }
+        });
+
+        $('#drawButton').blur();
+        $('#drawButton').addClass('active');
+    }
+
+    function rotateCanvas(degrees) {
+        var im = new Image();
+        var imdata = canvas.toDataURL();
+        im.onload = function() {
+            var ctx=canvas.getContext("2d");
+           if(degrees == 90 || degrees == 270) {
+               canvas.width = im.height;
+               canvas.height = im.width;
+           } else {
+               canvas.width = im.width;
+               canvas.height = im.height;
+           }
+           if(degrees == 90 || degrees == 270) {
+               ctx.translate(im.height/2,im.width/2);
+           } else {
+               ctx.translate(im.width/2,im.height/2);
+          }
+          ctx.save();
+           ctx.rotate(degrees*Math.PI/180);
+           ctx.drawImage(im,-im.width/2,-im.height/2);
+           ctx.restore();
+        }
+        im.src = imdata;
+    }
+    </script>
+</body>
+</html>
