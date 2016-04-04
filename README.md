@@ -5,6 +5,8 @@ The project started because I became tired of using GIMP for most trivial image 
 This application uses HTML5 Canvas and HTML5 File API for client-side image processing in the browser. Right now it supports loading files from a disk, cropping, downscaling to some hardcoded dimensions, rotating, and freehand drawing with 5px red brush.
 More drawing tools will come in the future.
 
+(http://dev.gis-support.pl/paintose)[Live demo]
+
 ## Installation
 
 Just clone this repository into DocumentRoot of your webserver.
